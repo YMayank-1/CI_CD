@@ -1,0 +1,148 @@
+name: Deploy
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'dags/**'
+      - 'plugins/**'
+      - 'sql/**'      
+  workflow_dispatch:
+
+jobs:
+  Deploy:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: 'read'
+      actions: 'read'
+      id-token: 'write'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: ${{ github.event_name == 'pull_request' && 2 || 0 }}
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v1
+        with:
+          credentials_json: "${{ secrets.GOOGLE_CLOUD_KEY_PROD }}"
+
+      - name: Setup Google Cloud SDK
+        uses: google-github-actions/setup-gcloud@v1
+
+      - name: Get gcloud info
+        run: gcloud info
+
+      - name: Dump GitHub context
+        env:
+          GITHUB_CONTEXT: ${{ toJson(github) }}
+        run: echo "$GITHUB_CONTEXT"
+
+      - name: Get changed files
+        id: changed-files
+        run: |
+          if ${{ github.event_name == 'pull_request' }}; then
+            echo "changed_files=$(git diff --name-only -r HEAD^1 HEAD ':!/.github/workflows/*' | xargs)" >> $GITHUB_OUTPUT
+          else
+            echo "changed_files=$(git diff --name-only ${{ github.event.before }} ${{ github.event.after }} ':!/.github/workflows/*' | xargs)" >> $GITHUB_OUTPUT
+          fi
+
+      - name: install python packages
+        run: |
+          cd cicd_scripts
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: List changed files
+        run: |
+          for file in ${{ steps.changed-files.outputs.changed_files }}; do
+            echo "Changed File - $file"
+          done
+
+      - name: get working directory
+        run: |
+          pwd
+
+      - name: Check for new JSON files
+        id: new-json-files
+        run: |
+          if [[ -n "$(git diff --name-only HEAD^ HEAD '*.json')" ]]; then
+            echo "::set-output name=has_new_json::true"
+          else
+            echo "::set-output name=has_new_json::false"
+          fi
+        continue-on-error: true
+
+      - name: Create BigQuery table for new JSON files
+        if: ${{ steps.new-json-files.outputs.has_new_json == 'true' }}
+        run: |
+          for file in $(git diff --name-only HEAD^ HEAD '*.json'); do
+            echo "Processing new JSON file - $file"
+            # Read JSON file and extract necessary information
+            content=$(cat $file)
+            project_id=$(echo $content | jq -r '.project_id')
+            dataset_id=$(echo $content | jq -r '.dataset_id')
+            table_name=$(echo $content | jq -r '.table_name')
+            schema=$(echo $content | jq -r '.schema | tostring')
+            policy_tags=$(echo $content | jq -r '.policy_tags | tostring')
+
+            # Create BigQuery table
+            bq mk --project_id=$project_id --dataset_id=$dataset_id --table=$table_name --schema=$schema --policy_tags=$policy_tags
+          done
+
+      - name: Deploy Changes
+        if: ${{ steps.changed-files.outputs.changed_files }}
+        run: |
+          for file in ${{ steps.changed-files.outputs.changed_files }}; do
+            if [[ "$file" =~ ^(dags/|plugins/|sql/) ]]; then
+              echo "$file"
+            
+              # Check if the file exists
+              if [[ -e "$file" ]]; then
+                echo "Copying file to GCS Bucket - $file"
+
+                echo gs://${{ vars.GCS_BUCKET_PROD }}/"$file"
+                gsutil cp "$file" gs://${{ vars.GCS_BUCKET_PROD }}/"$file"
+
+                # Check if the file is in the 'sql/' folder and has a '.sql' extension
+                if [[ "$file" =~ ^sql/prod/bronze/.*\.sql$ ]]; then
+                  echo "Executing Bronze Layer SQL file - $file"
+                
+                  #Pass project and secret names to python file args
+                  python cicd_scripts/bq_sql_execution.py "$file" "${{ vars.BRONZE_PROJECT_ID_PROD }}" "${{ vars.BRONZE_SECRET_NAME_PROD }}" "${{ vars.BRONZE_PROJECT_ID_PROD }}"
+                fi
+                if [[ "$file" =~ ^sql/prod/silver/.*\.sql$ ]]; then
+                  # Execute bq command to run the entire SQL file
+                  echo "Executing Silver Layer SQL file - $file"
+
+                  #Pass project and secret names to python file args
+                  python cicd_scripts/bq_sql_execution.py "$file" "${{ vars.BRONZE_PROJECT_ID_PROD }}" "${{ vars.SILVER_SECRET_NAME_PROD }}" "${{ vars.SILVER_PROJECT_ID_PROD }}"
+                fi
+              
+              else
+                echo "Check file availability in GCS - $file"
+                # remove it from the GCS bucket
+                gsutil -q stat "gs://${{ vars.GCS_BUCKET_PROD }}/$file" 
+                status=$?
+                if [[ $status == 0 ]]; then
+                  echo "File exists"
+                  gsutil rm "gs://${{ vars.GCS_BUCKET_PROD }}/$file"
+                else
+                  echo "File does not exist, Skipping the deletion"  
+                  echo  "gs://${{ vars.GCS_BUCKET_PROD }}/$file"
+                fi
+              fi
+            fi
+          done
+
+      - name: notify slack
+        uses: 8398a7/action-slack@v3
+        with:
+          author_name: 'Production Deployment'
+          status: ${{ job.status }}
+          fields: repo,author,job,took
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        if: always()
