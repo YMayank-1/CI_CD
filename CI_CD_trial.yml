@@ -6,7 +6,9 @@ on:
     paths:
       - 'dags/**'
       - 'plugins/**'
-      - 'sql/**'      
+      - 'sql/**'
+      - 'json/**' 
+
   workflow_dispatch:
 
 jobs:
@@ -65,38 +67,11 @@ jobs:
         run: |
           pwd
 
-      - name: Check for new JSON files
-        id: new-json-files
-        run: |
-          if [[ -n "$(git diff --name-only HEAD^ HEAD '*.json')" ]]; then
-            echo "::set-output name=has_new_json::true"
-          else
-            echo "::set-output name=has_new_json::false"
-          fi
-        continue-on-error: true
-
-      - name: Create BigQuery table for new JSON files
-        if: ${{ steps.new-json-files.outputs.has_new_json == 'true' }}
-        run: |
-          for file in $(git diff --name-only HEAD^ HEAD '*.json'); do
-            echo "Processing new JSON file - $file"
-            # Read JSON file and extract necessary information
-            content=$(cat $file)
-            project_id=$(echo $content | jq -r '.project_id')
-            dataset_id=$(echo $content | jq -r '.dataset_id')
-            table_name=$(echo $content | jq -r '.table_name')
-            schema=$(echo $content | jq -r '.schema | tostring')
-            policy_tags=$(echo $content | jq -r '.policy_tags | tostring')
-
-            # Create BigQuery table
-            bq mk --project_id=$project_id --dataset_id=$dataset_id --table=$table_name --schema=$schema --policy_tags=$policy_tags
-          done
-
       - name: Deploy Changes
         if: ${{ steps.changed-files.outputs.changed_files }}
         run: |
           for file in ${{ steps.changed-files.outputs.changed_files }}; do
-            if [[ "$file" =~ ^(dags/|plugins/|sql/) ]]; then
+            if [[ "$file" =~ ^(dags/|plugins/|sql/|json/) ]]; then
               echo "$file"
             
               # Check if the file exists
@@ -137,12 +112,37 @@ jobs:
             fi
           done
 
+      - name: Check for new JSON files
+        id: new-json-files
+        run: |
+          if [[ -n "$(git diff --name-only HEAD^ HEAD 'json/*.json')" ]]; then
+            echo "::set-output name=has_new_json::true"
+          else
+            echo "::set-output name=has_new_json::false"
+          fi
+        continue-on-error: true
+
+      - name: Create BigQuery table from JSON
+        if: ${{ steps.new-json-files.outputs.has_new_json }}
+        run: |
+          # Parse JSON file content
+          json_file=$(ls -t json/*.json | head -n 1)
+          json_file_content=$(cat "$json_file")
+          project_id=$(echo "$json_file_content" | jq -r '.project_id')
+          dataset_id=$(echo "$json_file_content" | jq -r '.dataset_id')
+          
+
+          table_name=$(basename json/json_file.json)
+          schema=$(echo "$json_file_content" | jq -r '.schema')
+         
+
+          # Create BigQuery table with partitioning
+          bq mk --table --project_id="$project_id" --dataset_id="$dataset_id" --table="$table_name" --schema="$schema"  --time_partitioning_type=DAY --time_partitioning_field=your_partition_field_name
+
       - name: notify slack
         uses: 8398a7/action-slack@v3
         with:
           author_name: 'Production Deployment'
           status: ${{ job.status }}
           fields: repo,author,job,took
-        env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
         if: always()
