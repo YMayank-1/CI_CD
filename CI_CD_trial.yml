@@ -135,9 +135,10 @@ jobs:
           table_name=$(basename json/json_file.json)
           schema=$(echo "$json_file_content" | jq -r '.schema')
          
+          partitions=$(echo "$json_file_content" | jq -r '.partitions | join(",")')
 
           # Create BigQuery table with partitioning
-          bq mk --table --project_id="$project_id" --dataset_id="$dataset_id" --table="$table_name" --schema="$schema"  --time_partitioning_type=DAY --time_partitioning_field=your_partition_field_name
+          bq mk --table --project_id="$project_id" --dataset_id="$dataset_id" --table="$table_name" --schema="$schema"  --time_partitioning_type=DAY --time_partitioning_field="$partitions"
 
       - name: notify slack
         uses: 8398a7/action-slack@v3
