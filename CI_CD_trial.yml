@@ -134,11 +134,20 @@ jobs:
 
           table_name=$(basename json/json_file.json)
           schema=$(echo "$json_file_content" | jq -r '.schema')
-         
-          partitions=$(echo "$json_file_content" | jq -r '.partitions | join(",")')
 
-          # Create BigQuery table with partitioning
-          bq mk --table --project_id="$project_id" --dataset_id="$dataset_id" --table="$table_name" --schema="$schema"  --time_partitioning_type=DAY --time_partitioning_field="$partitions"
+          # Extract partition field if present
+          partition_field=$(echo "$json_file_content" | jq -r '.partition_field')
+         
+          
+          # Create BigQuery table with or without partitioning
+          if [[ -n "$partition_field" ]]; then
+            # Extract the partitions list
+            partitions=$(echo "$json_file_content" | jq -r '.partitions | join(",")')
+            bq mk --table --project_id="$project_id" --dataset_id="$dataset_id" --table="$table_name" --schema="$schema" --time_partitioning_type=DAY --time_partitioning_field="$partition_field" 
+          else
+            bq mk --table --project_id="$project_id" --dataset_id="$dataset_id" --table="$table_name" --schema="$schema"
+          fi
+
 
       - name: notify slack
         uses: 8398a7/action-slack@v3
