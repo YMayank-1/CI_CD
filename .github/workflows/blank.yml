@@ -1,0 +1,178 @@
+name: Deploy
+
+on:
+  push:
+    branches: [ staging ]
+    paths:
+      - 'dags/**'
+      - 'plugins/**'
+      - 'sql/**'
+      - 'json/**'
+
+  workflow_dispatch:
+
+jobs:
+  Deploy:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: 'read'
+      actions: 'read'
+      id-token: 'write'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: ${{ github.event_name == 'pull_request' && 2 || 0 }}
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v1
+        with:
+          credentials_json: "${{ secrets.GOOGLE_CLOUD_KEY_DEV }}"
+
+      - name: Setup Google Cloud SDK
+        uses: google-github-actions/setup-gcloud@v1
+
+      - name: Get gcloud info
+        run: gcloud info
+
+      - name: Dump GitHub context
+        env:
+          GITHUB_CONTEXT: ${{ toJson(github) }}
+        run: echo "$GITHUB_CONTEXT"
+
+      - name: Get changed files
+        id: changed-files
+        run: |
+          if ${{ github.event_name == 'pull_request' }}; then
+            echo "changed_files=$(git diff --name-only -r HEAD^1 HEAD ':!/.github/workflows/*' | xargs)" >> $GITHUB_OUTPUT
+          else
+            echo "changed_files=$(git diff --name-only ${{ github.event.before }} ${{ github.event.after }} ':!/.github/workflows/*' | xargs)" >> $GITHUB_OUTPUT
+          fi
+      - name: install python packages
+        run: |
+          cd cicd_scripts
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: List changed files
+        run: |
+          for file in ${{ steps.changed-files.outputs.changed_files }}; do
+            echo "Changed File - $file"
+          done
+      - name: get working directory
+        run: |
+          pwd
+      - name: Deploy Changes
+        if: ${{ steps.changed-files.outputs.changed_files }}
+        run: |
+          failed=0
+          failed_files=()
+          for file in ${{ steps.changed-files.outputs.changed_files }}; do
+            if [[ "$file" =~ ^(dags/|plugins/|sql/) ]]; then
+              echo "$file"
+              # Check if the file exists
+              if [[ -e "$file" ]]; then
+                echo "Copying file to GCS Bucket - $file"
+                echo gs://${{ vars.GCS_BUCKET_DEV }}/"$file"
+                gsutil cp "$file" gs://${{ vars.GCS_BUCKET_DEV }}/"$file"
+                # Check if the file is in the 'sql/' folder and has a '.sql' extension
+                if [[ "$file" =~ ^sql/dev/bronze/.*\.sql$ ]]; then
+                  echo "Executing Bronze Layer SQL file - $file"
+                
+                  #Pass project and secret names to python file args
+                  if ! python cicd_scripts/bq_sql_execution.py "$file" "${{ vars.BRONZE_PROJECT_ID_DEV }}" "${{ vars.BRONZE_SECRET_NAME_DEV }}" "${{ vars.BRONZE_PROJECT_ID_DEV }}"; then
+                    failed_files+=("$file")
+                    echo "Error executing $file. Moving to next file."
+                    failed=1
+                  fi
+                fi
+                if [[ "$file" =~ ^sql/dev/silver/.*\.sql$ ]]; then
+                  # Execute bq command to run the entire SQL file
+                  echo "Executing Silver Layer SQL file - $file"
+                  #Pass project and secret names to python file args
+                  if ! python cicd_scripts/bq_sql_execution.py "$file" "${{ vars.BRONZE_PROJECT_ID_DEV }}" "${{ vars.SILVER_SECRET_NAME_DEV }}" "${{ vars.SILVER_PROJECT_ID_DEV }}"; then
+                    failed_files+=("$file")
+                    echo "Error executing $file. Moving to next file."
+                    failed=1
+                  fi
+                fi
+                # List the failed files
+                echo "exit status: $failed"
+                if [[ $failed == 0 ]]; then
+                  echo "No SQL file failed in this process."
+                else
+                  echo "The following files are failed in this process:"
+          
+                  # Iterate over each element in the files variable and print them line by line
+                  for file in "${failed_files[@]}"; do
+                    echo "$file"
+                  done
+                fi
+              else
+                echo "Check file availability in GCS - $file"
+                # remove it from the GCS bucket
+                gsutil -q stat "gs://${{ vars.GCS_BUCKET_DEV }}/$file" 
+                status=$?
+                if [[ $status == 0 ]]; then
+                  echo "File exists"
+                  gsutil rm "gs://${{ vars.GCS_BUCKET_DEV }}/$file"
+                else
+                  echo "File does not exist, Skipping the deletion"  
+                  echo  "gs://${{ vars.GCS_BUCKET_DEV }}/$file"
+                fi
+              fi
+            fi
+          done
+          exit $failed
+      - name: Check for new JSON files
+        id: new-json-files
+        run: |
+          if [[ -n "$(git diff --name-only HEAD^ HEAD 'json/dev/*.json')" ]]; then
+            echo "::set-output name=has_new_json::true"
+          else
+            echo "::set-output name=has_new_json::false"
+          fi
+        continue-on-error: true
+
+      - name: Create BigQuery table from JSON
+        if: ${{ steps.new-json-files.outputs.has_new_json }}
+        run: |
+          # Parse JSON file content
+          json_file=$(ls -t json/dev/*.json | head -n 1)
+          json_file_content=$(cat "$json_file")
+          echo $json_file_content
+          project_id=$(echo "$json_file_content" | jq -r '.project_id')
+          dataset_id=$(echo "$json_file_content" | jq -r '.dataset_id')
+          table_id=$(echo "$json_file_content" | jq -r '.table_id')
+          echo $project_id
+          echo $dataset_id
+          echo $table_id
+          table_name=$(basename json/dev/json_file.json)
+          schema=$(echo "$json_file_content" | jq -r '.schema')
+          echo $schema
+          
+          # Extract partition field if present
+          partition_field=$(echo "$json_file_content" | jq -r '.partition_field')
+          echo "Partition field: $partition_field"
+          bq mk --table --project_id="$project_id" --dataset_id="$dataset_id" --table="$table_id" --schema="$schema"
+          # Create BigQuery table with or without partitioning
+          if [[ -n "$partition_field" ]]; then
+            # Extract the partitions list
+            echo "Create table with partition"
+            partitions=$(echo "$json_file_content" | jq -r '.partitions | join(",")')
+            bq mk --table --project_id="$project_id" --dataset_id="$dataset_id" --table="$table_id" --schema="$schema" --time_partitioning_type=DAY --time_partitioning_field="$partition_field" 
+          else
+            echo "Create table without partition"
+            bq mk --table --project_id="$project_id" --dataset_id="$dataset_id" --table="$table_id" --schema="$schema"
+          fi
+      - name: notify slack
+        uses: 8398a7/action-slack@v3
+        with:
+          author_name: 'Staging Deployment'
+          status: ${{ job.status }}
+          fields: repo,author,job,took
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        if: always()
+  
