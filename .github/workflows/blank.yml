@@ -50,11 +50,7 @@ jobs:
           else
             echo "changed_files=$(git diff --name-only ${{ github.event.before }} ${{ github.event.after }} ':!/.github/workflows/*' | xargs)" >> $GITHUB_OUTPUT
           fi
-      - name: install python packages
-        run: |
-          cd cicd_scripts
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
+   
       - name: List changed files
         run: |
           for file in ${{ steps.changed-files.outputs.changed_files }}; do
