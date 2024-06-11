@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - 'json/dev/*.json'
+      
   workflow_dispatch:
 
 jobs:
@@ -19,18 +20,24 @@ jobs:
         uses: google-github-actions/auth@v1
         with:
           credentials_json: "${{ secrets.GOOGLE_CLOUD_KEY_DEV }}"
+     
+        
+
 
       - name: Setup Google Cloud SDK
         uses: google-github-actions/setup-gcloud@v1
 
       - name: Get gcloud info
         run: gcloud info
+      - name: Create json folder if it doesn't exist
+        run: mkdir -p ironman
 
       - name: Extract Schema from JSON
         run: |
           json_file=$(ls -t json/dev/*.json | head -n 1)
           schema=$(jq -r '.schema' "$json_file")
-          echo "$schema" > json/tryschema.json
+          echo "$schema" > ironman/tryschema.json
+     
 
       - name: Create BigQuery table from JSON
         run: |
@@ -50,6 +57,8 @@ jobs:
           # Extract partition field if present
           partition_field=$(echo "$json_file_content" | jq -r '.partition_field')
           echo "Partition field: $partition_field"
+
+          bq mk --project_id="$project_id" --dataset_id="$dataset_id" --table "table_id" ironman/tryschema.json
 
           # Create BigQuery table with or without partitioning
           if [[ -n "$partition_field" ]]; then
