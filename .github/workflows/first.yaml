@@ -1,0 +1,68 @@
+name: Process New JSON Files
+
+on:
+  push:
+    paths:
+      - 'json/dev/*.json'
+
+jobs:
+  process_json:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: ${{ github.event_name == 'pull_request' && 2 || 0 }}
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v1
+        with:
+          credentials_json: "${{ secrets.GOOGLE_CLOUD_KEY_DEV }}"
+
+      - name: Setup Google Cloud SDK
+        uses: google-github-actions/setup-gcloud@v1
+
+      - name: Get gcloud info
+        run: gcloud info
+
+      - name: Check for new JSON files
+        id: check_new_json
+        run: |
+          if [[ $(ls json/dev/*.json 2>/dev/null) ]]; then
+            echo "New JSON files found"
+            echo "::set-env name=has_new_json::true"
+          else
+            echo "No new JSON files found"
+            echo "::set-env name=has_new_json::false"
+          fi
+          
+      - name: Create BigQuery table from JSON
+        if: ${{ env.has_new_json == 'true' }}
+        run: |
+          # Parse JSON file content
+          json_file=$(ls -t json/dev/*.json | head -n 1)
+          json_file_content=$(cat "$json_file")
+          echo $json_file_content
+          project_id=$(echo "$json_file_content" | jq -r '.project_id')
+          dataset_id=$(echo "$json_file_content" | jq -r '.dataset_id')
+          table_id=$(echo "$json_file_content" | jq -r '.table_id')
+          echo $project_id
+          echo $dataset_id
+          echo $table_id
+          schema=$(echo "$json_file_content" | jq -r '.schema')
+          echo $schema
+          
+          # Extract partition field if present
+          partition_field=$(echo "$json_file_content" | jq -r '.partition_field')
+          echo "Partition field: $partition_field"
+          
+          # Create BigQuery table with or without partitioning
+          if [[ -n "$partition_field" ]]; then
+            # Extract the partitions list
+            echo "Create table with partition"
+            partitions=$(echo "$json_file_content" | jq -r '.partitions | join(",")')
+            bq mk --table --project_id="$project_id" --dataset_id="$dataset_id" --table="$table_id" --schema="$schema" --time_partitioning_type=DAY --time_partitioning_field="$partition_field"
+          else
+            echo "Create table without partition"
+            bq mk --table --project_id="$project_id" --dataset_id="$dataset_id" --table="$table_id" --schema="$schema"
+          fi
