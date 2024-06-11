@@ -46,6 +46,8 @@ jobs:
           # Extract partition field if present
           partition_field=$(echo "$json_file_content" | jq -r '.partition_field')
           echo "Partition field: $partition_field"
+
+          bq mk --project_id="$project_id" --dataset_id="$dataset_id" --table "$table_id" $schema
           
           # Create BigQuery table with or without partitioning
           if [[ -n "$partition_field" ]]; then
