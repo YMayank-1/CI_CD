@@ -30,7 +30,7 @@ jobs:
         run: |
           json_file=$(ls -t json/dev/*.json | head -n 1)
           schema=$(jq -r '.schema' "$json_file")
-          echo "$schema" > json/dev/schema.json
+          echo "$schema" > json/tryschema.json
 
       - name: Create BigQuery table from JSON
         run: |
@@ -56,8 +56,8 @@ jobs:
             # Extract the partitions list
             echo "Create table with partition"
             partitions=$(echo "$json_file_content" | jq -r '.partitions | join(",")')
-            bq mk --table --project_id="$project_id" --dataset_id="$dataset_id" --table="$table_id" --schema=json/dev/schema.json --time_partitioning_type=DAY --time_partitioning_field="$partition_field"
+            bq mk --table --project_id="$project_id" --dataset_id="$dataset_id" --table="$table_id" --schema=json/tryschema.json --time_partitioning_type=DAY --time_partitioning_field="$partition_field"
           else
             echo "Create table without partition"
-            bq mk --table --project_id="$project_id" --dataset_id="$dataset_id" --table="$table_id" --schema=json/dev/schema.json
+            bq mk --table --project_id="$project_id" --dataset_id="$dataset_id" --table="$table_id" --schema=json/tryschema.json
           fi
