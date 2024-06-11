@@ -26,6 +26,12 @@ jobs:
       - name: Get gcloud info
         run: gcloud info
 
+      - name: Extract Schema from JSON
+        run: |
+          json_file=$(ls -t json/dev/*.json | head -n 1)
+          schema=$(jq -r '.schema' "$json_file")
+          echo "$schema" > json/dev/schema.json
+
       - name: Create BigQuery table from JSON
         run: |
           # Fetch the last updated JSON file
@@ -40,22 +46,18 @@ jobs:
           echo $project_id
           echo $dataset_id
           echo $table_id
-          schema=$(echo "$json_file_content" | jq -r '.schema')
-          echo $schema
           
           # Extract partition field if present
           partition_field=$(echo "$json_file_content" | jq -r '.partition_field')
           echo "Partition field: $partition_field"
 
-          bq mk --project_id="$project_id" --dataset_id="$dataset_id" --table "$table_id" $json_file
-          
           # Create BigQuery table with or without partitioning
           if [[ -n "$partition_field" ]]; then
             # Extract the partitions list
             echo "Create table with partition"
             partitions=$(echo "$json_file_content" | jq -r '.partitions | join(",")')
-            bq mk --table --project_id="$project_id" --dataset_id="$dataset_id" --table="$table_id" --schema="$schema" --time_partitioning_type=DAY --time_partitioning_field="$partition_field"
+            bq mk --table --project_id="$project_id" --dataset_id="$dataset_id" --table="$table_id" --schema=json/dev/schema.json --time_partitioning_type=DAY --time_partitioning_field="$partition_field"
           else
             echo "Create table without partition"
-            bq mk --table --project_id="$project_id" --dataset_id="$dataset_id" --table="$table_id" --schema="$schema"
+            bq mk --table --project_id="$project_id" --dataset_id="$dataset_id" --table="$table_id" --schema=json/dev/schema.json
           fi
