@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - 'json/dev/*.json'
+      - 'schemas'
       
   workflow_dispatch:
 
@@ -29,14 +30,12 @@ jobs:
 
       - name: Get gcloud info
         run: gcloud info
-      - name: Create json folder if it doesn't exist
-        run: mkdir -p ironman
 
       - name: Extract Schema from JSON
         run: |
           json_file=$(ls -t json/dev/*.json | head -n 1)
           schema=$(jq -r '.schema' "$json_file")
-          echo "$schema" > ironman/tryschema.json
+          echo "$schema" > schemas/tryschema.json
      
 
       - name: Create BigQuery table from JSON
@@ -58,7 +57,7 @@ jobs:
           partition_field=$(echo "$json_file_content" | jq -r '.partition_field')
           echo "Partition field: $partition_field"
 
-          bq mk --project_id="$project_id" --dataset_id="$dataset_id" --table "table_id" ironman/tryschema.json
+          bq mk --project_id="$project_id" --dataset_id="$dataset_id" --table "table_id" schemas/tryschema.json
 
           # Create BigQuery table with or without partitioning
           if [[ -n "$partition_field" ]]; then
