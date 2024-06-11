@@ -1,0 +1,35 @@
+{
+    "project_id": "fm-test-env",
+    "dataset_id": "fm_de_interns",
+    "table_id": "policy_tags_test",
+    "schema": [
+      {
+        "name": "ip",
+        "type": "STRING",
+        "mode": "REQUIRED"
+      },
+      {
+        "name": "email",
+        "type": "STRING",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "last_name",
+        "type": "STRING",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "run_date",
+        "type": "DATE",
+        "mode": "REQUIRED"
+      },
+      {
+        "name": "process_type",
+        "type": "STRING",
+        "mode": "REQUIRED"
+      }
+    ],
+    "time_partitioning_type": "DAY",
+    "clustering_fields": ["process_type"]
+  }
+  
