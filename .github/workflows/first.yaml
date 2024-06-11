@@ -26,19 +26,7 @@ jobs:
       - name: Get gcloud info
         run: gcloud info
 
-      - name: Check for new JSON files
-        id: check_new_json
-        run: |
-          if [[ $(ls json/dev/*.json 2>/dev/null) ]]; then
-            echo "New JSON files found"
-            echo "has_new_json=true" >> $GITHUB_ENV
-          else
-            echo "No new JSON files found"
-            echo "has_new_json=false" >> $GITHUB_ENV
-          fi
-
       - name: Create BigQuery table from JSON
-        if: ${{ env.has_new_json == 'true' }}
         run: |
           # Fetch the last updated JSON file
           json_file=$(ls -t json/dev/*.json | head -n 1)
