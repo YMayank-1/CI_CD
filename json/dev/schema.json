@@ -1,7 +1,7 @@
 {
     "project_id": "fm-test-env",
     "dataset_id": "fm_de_interns",
-    "table_id": "policy_tags_test",
+    "table_id": "advisor",
     "schema": [
       {
         "name": "ip",
