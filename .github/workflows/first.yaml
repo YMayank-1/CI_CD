@@ -36,6 +36,10 @@ jobs:
           json_file=$(ls -t json/dev/*.json | head -n 1)
           schema=$(jq -r '.schema' "$json_file")
           echo "$schema" > schemas/tryschema.json
+          
+      - name: Read and print the content saved by tryschema.json
+        run: cat schemas/tryschema.json
+
      
 
       - name: Create BigQuery table from JSON
