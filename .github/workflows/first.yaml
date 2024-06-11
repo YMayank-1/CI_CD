@@ -31,19 +31,21 @@ jobs:
         run: |
           if [[ $(ls json/dev/*.json 2>/dev/null) ]]; then
             echo "New JSON files found"
-            echo "::set-env name=has_new_json::true"
+            echo "has_new_json=true" >> $GITHUB_ENV
           else
             echo "No new JSON files found"
-            echo "::set-env name=has_new_json::false"
+            echo "has_new_json=false" >> $GITHUB_ENV
           fi
-          
+
       - name: Create BigQuery table from JSON
         if: ${{ env.has_new_json == 'true' }}
         run: |
-          # Parse JSON file content
+          # Fetch the last updated JSON file
           json_file=$(ls -t json/dev/*.json | head -n 1)
           json_file_content=$(cat "$json_file")
           echo $json_file_content
+
+          # Parse JSON file content
           project_id=$(echo "$json_file_content" | jq -r '.project_id')
           dataset_id=$(echo "$json_file_content" | jq -r '.dataset_id')
           table_id=$(echo "$json_file_content" | jq -r '.table_id')
