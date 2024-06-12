@@ -53,6 +53,7 @@ jobs:
           project_id=$(echo "$json_file_content" | jq -r '.project_id')
           dataset_id=$(echo "$json_file_content" | jq -r '.dataset_id')
           table_id=$(echo "$json_file_content" | jq -r '.table_id')
+          schema=$(echo "$json_file_content" | jq -r '.schema')
           echo $project_id
           echo $dataset_id
           echo $table_id
@@ -61,7 +62,7 @@ jobs:
           partition_field=$(echo "$json_file_content" | jq -r '.partition_field')
           echo "Partition field: $partition_field"
 
-          bq mk --project_id="$project_id" --dataset_id="$dataset_id" --table "$table_id" "$json_file".json
+          bq mk --project_id="$project_id" --dataset_id="$dataset_id" --table "$table_id" "$schema".json
 
           # Create BigQuery table with or without partitioning
           if [[ -n "$partition_field" ]]; then
